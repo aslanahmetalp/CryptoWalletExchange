@@ -30,18 +30,18 @@ class Exchange:
 
     def update_rates_from_api(self):
         try:
-            # CoinGecko API'den BTC, ETH ve USD kurlarını alıyoruz
+            # Get BTC, ETH and USD rates from CoinGecko API
             url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd,eth"
             response = requests.get(url)
             data = response.json()
 
-            # API'den gelen veriyi işleme
+            # Processing data from API
             btc_usd = data['bitcoin']['usd']
             eth_usd = data['ethereum']['usd']
             btc_eth = data['bitcoin']['eth']
             eth_btc = 1 / btc_eth  # ETH'den BTC'ye oran
 
-            # Oranları güncelle
+            # update rates
             self.rates[('BTC', 'USD')] = btc_usd
             self.rates[('USD', 'BTC')] = 1 / btc_usd
             self.rates[('ETH', 'USD')] = eth_usd
@@ -67,18 +67,18 @@ class Exchange:
             return True
         return False
 
-# Örnek kullanım
+# Example usage
 btc_wallet = Wallet('BTC', 1)
 eth_wallet = Wallet('ETH', 10)
 usd_wallet = Wallet('USD', 10000)
 
 exchange = Exchange()
 
-# API'den oranları güncelle
+# Update rates from API
 exchange.update_rates_from_api()
 
-# 0.1 BTC'yi ETH'ye çevir
+# Convert 0.1 BTC to ETH
 exchange.convert(btc_wallet, eth_wallet, 0.1)
 
-# 5000 USD'yi BTC'ye çevir
+# Convert 5000 USD to BTC
 exchange.convert(usd_wallet, btc_wallet, 5000)
