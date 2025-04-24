@@ -1,84 +1,192 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from PIL import Image, ImageTk
 import requests
+from io import BytesIO
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-class Wallet:
-    def __init__(self, currency, balance=0):
-        self.currency = currency
-        self.balance = balance
+# Global dictionaries
+coin_dict = {}            # display_name -> coin_id
+coin_logo_urls = {}       # display_name -> logo URL
+logo_images = {}          # display_name -> PhotoImage cache
 
-    def deposit(self, amount):
-        self.balance += amount
-        print(f"Deposited {amount} {self.currency}. New balance: {self.balance} {self.currency}")
+# Functions
 
-    def withdraw(self, amount):
-        if amount > self.balance:
-            print(f"Insufficient balance to withdraw {amount} {self.currency}")
-            return False
-        self.balance -= amount
-        print(f"Withdrew {amount} {self.currency}. New balance: {self.balance} {self.currency}")
-        return True
+def load_coins():
+    """
+    Fetch top 100 coins, populate combobox and store logo URLs.
+    """
+    global coin_dict, coin_logo_urls
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "usd", "order": "market_cap_desc",
+              "per_page": 100, "page": 1, "sparkline": False}
+    try:
+        resp = requests.get(url, params=params)
+        resp.raise_for_status()
+        coins = resp.json()
+    except Exception as e:
+        messagebox.showerror("Hata", f"Coin verileri alınamadı:\n{e}")
+        return
 
-class Exchange:
-    def __init__(self):
-        self.rates = {
-            ('BTC', 'ETH'): 0.03,
-            ('ETH', 'BTC'): 33.33,
-            ('BTC', 'USD'): 50000,
-            ('USD', 'BTC'): 0.00002,
-            ('ETH', 'USD'): 4000,
-            ('USD', 'ETH'): 0.00025
-        }
+    coin_dict.clear()
+    coin_logo_urls.clear()
+    names = []
+    for coin in coins:
+        name = f"{coin['name']} ({coin['symbol'].upper()})"
+        coin_dict[name] = coin['id']
+        coin_logo_urls[name] = coin.get('image')
+        names.append(name)
 
-    def update_rates_from_api(self):
-        try:
-            # Get BTC, ETH and USD rates from CoinGecko API
-            url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd,eth"
-            response = requests.get(url)
-            data = response.json()
+    coin_combobox['values'] = names
+    if names:
+        coin_combobox.current(0)
+        update_logo(names[0])
 
-            # Processing data from API
-            btc_usd = data['bitcoin']['usd']
-            eth_usd = data['ethereum']['usd']
-            btc_eth = data['bitcoin']['eth']
-            eth_btc = 1 / btc_eth  # ETH'den BTC'ye oran
 
-            # update rates
-            self.rates[('BTC', 'USD')] = btc_usd
-            self.rates[('USD', 'BTC')] = 1 / btc_usd
-            self.rates[('ETH', 'USD')] = eth_usd
-            self.rates[('USD', 'ETH')] = 1 / eth_usd
-            self.rates[('BTC', 'ETH')] = btc_eth
-            self.rates[('ETH', 'BTC')] = eth_btc
+def update_logo(selected):
+    """
+    Load and display logo for selected coin.
+    """
+    url = coin_logo_urls.get(selected)
+    if not url:
+        logo_label.config(image='')
+        return
+    try:
+        if selected not in logo_images:
+            img_data = requests.get(url).content
+            img = Image.open(BytesIO(img_data)).resize((64, 64), Image.ANTIALIAS)
+            logo_images[selected] = ImageTk.PhotoImage(img)
+        logo_label.config(image=logo_images[selected])
+    except Exception:
+        logo_label.config(image='')
 
-            print("Exchange rates updated successfully from API.")
 
-        except Exception as e:
-            print(f"Error while fetching exchange rates: {e}")
+def convert_coin():
+    """
+    Perform conversion and show results.
+    """
+    sel = coin_combobox.get()
+    if not sel:
+        messagebox.showerror("Hata", "Lütfen bir coin seçiniz!")
+        return
+    try:
+        amt = float(amount_entry.get().strip())
+    except ValueError:
+        messagebox.showerror("Hata", "Lütfen geçerli bir miktar giriniz!")
+        return
 
-    def convert(self, from_wallet, to_wallet, amount):
-        pair = (from_wallet.currency, to_wallet.currency)
-        if pair not in self.rates:
-            print(f"Exchange rate for {from_wallet.currency} to {to_wallet.currency} not available.")
-            return False
-        rate = self.rates[pair]
-        converted_amount = amount * rate
-        if from_wallet.withdraw(amount):
-            to_wallet.deposit(converted_amount)
-            print(f"Converted {amount} {from_wallet.currency} to {converted_amount} {to_wallet.currency}")
-            return True
-        return False
+    currencies = []
+    if var_usd.get(): currencies.append('usd')
+    if var_eur.get(): currencies.append('eur')
+    if var_try.get(): currencies.append('try')
+    if not currencies:
+        messagebox.showerror("Hata", "Lütfen en az bir para birimi seçiniz!")
+        return
 
-# Example usage
-btc_wallet = Wallet('BTC', 1)
-eth_wallet = Wallet('ETH', 10)
-usd_wallet = Wallet('USD', 10000)
+    cid = coin_dict.get(sel)
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={cid}&vs_currencies={','.join(currencies)}"
+    try:
+        data = requests.get(url).json()
+        prices = data.get(cid, {})
+    except Exception as e:
+        messagebox.showerror("Hata", f"Fiyat alınamadı:\n{e}")
+        return
 
-exchange = Exchange()
+    lines = [f"{amt} {sel.split()[0]}:"]
+    for curr in currencies:
+        price = prices.get(curr)
+        if price is not None:
+            conv = price * amt
+            label = 'TL' if curr == 'try' else curr.upper()
+            lines.append(f"{label}: {conv:,.2f}")
+    result_label.config(text="\n".join(lines))
 
-# Update rates from API
-exchange.update_rates_from_api()
 
-# Convert 0.1 BTC to ETH
-exchange.convert(btc_wallet, eth_wallet, 0.1)
+def show_chart():
+    """
+    Display 7-day price chart for selected coin.
+    """
+    sel = coin_combobox.get()
+    cid = coin_dict.get(sel)
+    if not cid:
+        return
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart"
+        params = {"vs_currency": "usd", "days": 7}
+        data = requests.get(url, params=params).json()
+        prices = data['prices']  # [ [timestamp, price], ... ]
+    except Exception as e:
+        messagebox.showerror("Hata", f"Grafik verisi alınamadı:\n{e}")
+        return
 
-# Convert 5000 USD to BTC
-exchange.convert(usd_wallet, btc_wallet, 5000)
+    # Create plot
+    vals  = [p[1] for p in prices]
+    fig = Figure(figsize=(5, 3), dpi=100)
+    ax = fig.add_subplot(111)
+    ax.plot(vals)
+    ax.set_title(f"{sel.split()[0]} - Son 7 Gün Fiyat")
+    ax.set_ylabel('USD')
+    ax.grid(True)
+
+    # Embed in Tkinter
+    chart_win = tk.Toplevel(root)
+    chart_win.title(f"{sel.split()[0]} Fiyat Grafiği")
+    canvas = FigureCanvasTkAgg(fig, master=chart_win)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill='both', expand=True)
+
+
+# --- UI Setup ---
+root = tk.Tk()
+root.title("Coin Dönüştürücü")
+root.geometry("500x500")
+
+# Header
+header = ttk.Label(root, text="Coin Dönüştürücü", font=("Helvetica", 18, "bold"))
+header.pack(pady=10)
+
+# Logo
+logo_label = ttk.Label(root)
+logo_label.pack(pady=5)
+
+# Coin selection
+frame_coin = ttk.Frame(root)
+frame_coin.pack(fill='x', padx=20)
+ttk.Label(frame_coin, text="Coin Seçiniz:", font=("Helvetica", 12)).pack(anchor='w')
+coin_combobox = ttk.Combobox(frame_coin, state='readonly', font=("Helvetica", 12))
+coin_combobox.pack(fill='x', pady=5)
+coin_combobox.bind("<<ComboboxSelected>>", lambda e: update_logo(coin_combobox.get()))
+
+# Amount entry
+frame_amt = ttk.Frame(root)
+frame_amt.pack(fill='x', padx=20)
+ttk.Label(frame_amt, text="Miktar:", font=("Helvetica", 12)).pack(anchor='w')
+amount_entry = ttk.Entry(frame_amt, font=("Helvetica", 12))
+amount_entry.pack(fill='x', pady=5)
+
+# Currency checkboxes
+frame_cur = ttk.Labelframe(root, text="Para Birimleri", padding=10)
+frame_cur.pack(fill='x', padx=20, pady=10)
+var_usd = tk.IntVar(value=1)
+var_eur = tk.IntVar(value=1)
+var_try = tk.IntVar(value=1)
+for txt, var in [("USD", var_usd), ("EUR", var_eur), ("TL", var_try)]:
+    ttk.Checkbutton(frame_cur, text=txt, variable=var).pack(side='left', padx=10)
+
+# Buttons
+btn_frame = ttk.Frame(root)
+btn_frame.pack(pady=15)
+convert_btn = ttk.Button(btn_frame, text="Dönüştür", command=convert_coin)
+convert_btn.grid(row=0, column=0, padx=10)
+chart_btn = ttk.Button(btn_frame, text="Grafiği Göster", command=show_chart)
+chart_btn.grid(row=0, column=1, padx=10)
+
+# Result label
+result_label = ttk.Label(root, text="", font=("Helvetica", 14), justify='left')
+result_label.pack(pady=10)
+
+# Load initial data
+load_coins()
+
+root.mainloop()
